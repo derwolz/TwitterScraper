@@ -17,7 +17,7 @@ class Config:
     
     # Rate limiting
     REQUEST_DELAY = 1.0
-    MAX_PAGES_PER_USER = 10
+    MAX_PAGES_PER_USER = 9999
     
     # URLs
     PINNED_POST_URL_TEMPLATE = "https://twitter.com/i/web/status/{tweet_id}"

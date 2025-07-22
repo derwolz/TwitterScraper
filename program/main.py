@@ -18,15 +18,24 @@ class SocialDataCollector:
         """
         print(f"Starting collection for user: {username}")
         
+        # Normalize username for consistent checking
+        username = username.lower()
+        
         # Check if user has already been processed
         if not force_reprocess and self.db_manager.is_followings_scraped(username):
-            print(f"User {username} has already been processed. Use force_reprocess=True to reprocess.")
+            print(f"✅ User {username} has already been processed. Skipping.")
             processing_status = self.db_manager.get_processing_status(username)
             return {
                 "already_processed": True,
                 "followings_count": processing_status.get('followings_count', 0) if processing_status else 0,
-                "message": "User already processed"
+                "message": "User already processed - skipped"
             }
+        
+        # Check if user exists in database but hasn't been processed
+        if self.db_manager.user_exists(username):
+            print(f"📋 User {username} exists in database but hasn't been processed yet. Proceeding with followings collection...")
+        else:
+            print(f"🆕 New user {username} - will fetch user data and followings.")
         
         # First, get the user's own data
         user_data = self.api_client.get_user_data(username)
@@ -37,21 +46,24 @@ class SocialDataCollector:
             self.db_manager.mark_followings_scraped(username, 0, 0, max_pages, False, error_msg)
             return {"error": "Failed to retrieve user data"}
         
-        # Store the main user
+        # Store the main user (this will update if they already exist)
         if self.db_manager.store_user(user_data):
-            print(f"Stored user data for {username}")
+            print(f"✅ Stored/updated user data for {username}")
         else:
-            print(f"Failed to store user data for {username}")
+            print(f"❌ Failed to store user data for {username}")
         
         # Get all followings
         try:
+            print(f"🔍 Fetching followings for {username} (max {max_pages} pages)...")
             followings_data = self.api_client.get_all_user_followings(username, max_pages)
             
             if not followings_data:
-                print(f"No followings found for {username}")
+                print(f"📭 No followings found for {username}")
                 # Mark as complete even with 0 followings
                 self.db_manager.mark_followings_scraped(username, 0, 0, max_pages, True)
                 return {"main_user": 1, "followings": 0, "relationships": 0}
+            
+            print(f"📊 Processing {len(followings_data)} followings for {username}...")
             
             # Store followings and relationships with existence check
             new_users, existing_users, stored_relationships = self.db_manager.store_followings_batch_with_check(username, followings_data)
@@ -72,7 +84,7 @@ class SocialDataCollector:
                 "pages_scraped": pages_scraped
             }
             
-            print(f"Collection complete for {username}:")
+            print(f"✅ Collection complete for {username}:")
             print(f"  - Main user stored: {stats['main_user']}")
             print(f"  - New following users stored: {stats['new_followings']}")
             print(f"  - Existing following users found: {stats['existing_followings']}")
@@ -85,7 +97,7 @@ class SocialDataCollector:
             
         except Exception as e:
             error_msg = f"Error during followings collection: {str(e)}"
-            print(error_msg)
+            print(f"❌ {error_msg}")
             # Mark as failed
             self.db_manager.mark_followings_scraped(username, 0, 0, max_pages, False, error_msg)
             return {"error": error_msg}

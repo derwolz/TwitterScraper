@@ -56,14 +56,12 @@ class APIClient:
         Fetch followings for a user with pagination
         Returns: (followings_list, has_next_page, next_cursor)
         """
-        print("userName", username)
         url = f"{self.base_url}/user/followings?pageSize={self.page_size}&userName={username}"
         params = {}
         if cursor:
             params['cursor'] = cursor
         
         response = self._make_request("GET", url, params=params)
-        print("response for followers", response, params, url)
         if response and response.get('status') == 'success':
             followings = response.get('followings', [])
             has_next = response.get('has_next_page', False)
@@ -86,7 +84,6 @@ class APIClient:
                 print(f"Reached maximum pages limit ({max_pages})")
                 break
             
-            print(f"Fetching followings page {page_count + 1} for {username}...")
             followings, has_next, next_cursor = self.get_user_followings(username, cursor)
             
             if not followings:

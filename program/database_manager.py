@@ -69,7 +69,7 @@ class DatabaseManager:
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                cursor.execute('SELECT 1 FROM users WHERE username = ? LIMIT 1', (username,))
+                cursor.execute('SELECT 1 FROM users WHERE username = ? LIMIT 1', (username.lower(),))
                 return cursor.fetchone() is not None
         except Exception as e:
             print(f"Error checking if user {username} exists: {e}")
@@ -78,15 +78,18 @@ class DatabaseManager:
     def users_exist_batch(self, usernames: List[str]) -> Dict[str, bool]:
         """Check which users exist in the database in batch"""
         try:
+            # Normalize usernames to lowercase
+            normalized_usernames = [username.lower() for username in usernames]
+            
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 # Create a placeholder string for the IN query
-                placeholders = ','.join(['?' for _ in usernames])
-                cursor.execute(f'SELECT username FROM users WHERE username IN ({placeholders})', usernames)
+                placeholders = ','.join(['?' for _ in normalized_usernames])
+                cursor.execute(f'SELECT username FROM users WHERE username IN ({placeholders})', normalized_usernames)
                 existing_users = {row[0] for row in cursor.fetchall()}
                 
-                # Return dict with existence status for each username
-                return {username: username in existing_users for username in usernames}
+                # Return dict with existence status for each original username
+                return {username: username.lower() in existing_users for username in usernames}
         except Exception as e:
             print(f"Error checking batch user existence: {e}")
             return {username: False for username in usernames}
@@ -116,6 +119,9 @@ class DatabaseManager:
             website_link = self.extract_website_link(user_data.get('profile_bio'))
             pinned_post_link = self.extract_pinned_post_link(user_data.get('pinnedTweetIds', []))
             
+            # Normalize username to lowercase
+            username = user_data.get('userName', '').lower()
+            
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
@@ -125,7 +131,7 @@ class DatabaseManager:
                         created_at, is_automated, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
-                    user_data.get('userName'),
+                    username,
                     user_data.get('name'),
                     website_link,
                     user_data.get('description'),
@@ -153,7 +159,7 @@ class DatabaseManager:
                 cursor.execute('''
                     INSERT OR IGNORE INTO followings (follower_username, following_username)
                     VALUES (?, ?)
-                ''', (follower_username, following_username))
+                ''', (follower_username.lower(), following_username.lower()))
                 conn.commit()
                 return cursor.rowcount > 0
         except Exception as e:
@@ -183,8 +189,11 @@ class DatabaseManager:
             if not following_username:
                 continue
             
+            # Normalize username to lowercase
+            following_username = following_username.lower()
+            
             # Check if user already exists
-            if user_existence.get(following_username, False):
+            if user_existence.get(following_user.get('userName'), False):
                 print(f"User {following_username} already exists in database, skipping user storage")
                 existing_users_found += 1
             else:
@@ -213,7 +222,7 @@ class DatabaseManager:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
-                cursor.execute('SELECT * FROM users WHERE username = ?', (username,))
+                cursor.execute('SELECT * FROM users WHERE username = ?', (username.lower(),))
                 row = cursor.fetchone()
                 return dict(row) if row else None
         except Exception as e:
@@ -229,7 +238,7 @@ class DatabaseManager:
                     SELECT following_username FROM followings 
                     WHERE follower_username = ?
                     ORDER BY scraped_at DESC
-                ''', (username,))
+                ''', (username.lower(),))
                 return [row[0] for row in cursor.fetchall()]
         except Exception as e:
             print(f"Error retrieving followings for {username}: {e}")
@@ -244,7 +253,7 @@ class DatabaseManager:
                     SELECT follower_username FROM followings 
                     WHERE following_username = ?
                     ORDER BY scraped_at DESC
-                ''', (username,))
+                ''', (username.lower(),))
                 return [row[0] for row in cursor.fetchall()]
         except Exception as e:
             print(f"Error retrieving followers for {username}: {e}")
@@ -262,7 +271,7 @@ class DatabaseManager:
                         is_complete, error_message, last_attempt_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
-                    username, True, datetime.now().isoformat(),
+                    username.lower(), True, datetime.now().isoformat(),
                     followings_count, pages_scraped, max_pages,
                     is_complete, error_message, datetime.now().isoformat()
                 ))
@@ -280,7 +289,7 @@ class DatabaseManager:
                 cursor.execute('''
                     SELECT followings_scraped FROM user_processing_status 
                     WHERE username = ? AND followings_scraped = 1
-                ''', (username,))
+                ''', (username.lower(),))
                 result = cursor.fetchone()
                 return result is not None
         except Exception as e:
@@ -295,7 +304,7 @@ class DatabaseManager:
                 cursor = conn.cursor()
                 cursor.execute('''
                     SELECT * FROM user_processing_status WHERE username = ?
-                ''', (username,))
+                ''', (username.lower(),))
                 row = cursor.fetchone()
                 return dict(row) if row else None
         except Exception as e:
@@ -354,7 +363,7 @@ class DatabaseManager:
                 cursor = conn.cursor()
                 cursor.execute('''
                     DELETE FROM user_processing_status WHERE username = ?
-                ''', (username,))
+                ''', (username.lower(),))
                 conn.commit()
                 return True
         except Exception as e:
