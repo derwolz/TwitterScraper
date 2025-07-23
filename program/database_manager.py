@@ -27,6 +27,8 @@ class DatabaseManager:
                     following INTEGER,
                     pinned_post_link TEXT,
                     created_at TEXT,
+                    media_count INTEGER,
+                    status_count INTEGER,
                     is_automated BOOLEAN,
                     scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -45,7 +47,20 @@ class DatabaseManager:
                     UNIQUE(follower_username, following_username)
                 )
             ''')
-            
+
+           # AI analysis table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS ai_analysis (
+                    username TEXT PRIMARY KEY,
+                    ai_bio BOOLEAN NOT NULL,
+                    found_keywords TEXT,
+                    keyword_count INTEGER DEFAULT 0,
+                    analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (username) REFERENCES users(username)
+                )
+            ''')
+
             # User processing status table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS user_processing_status (
@@ -128,8 +143,8 @@ class DatabaseManager:
                     INSERT OR REPLACE INTO users (
                         username, name, url, bio, location, is_verified, 
                         verification_type, followers, following, pinned_post_link,
-                        created_at, is_automated, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        media_count,status_count, created_at, is_automated, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     username,
                     user_data.get('name'),
@@ -141,6 +156,8 @@ class DatabaseManager:
                     user_data.get('followers', 0),
                     user_data.get('following', 0),
                     pinned_post_link,
+                    user_data.get('mediaCount',0),
+                    user_data.get('statusesCount',0),
                     user_data.get('createdAt'),
                     user_data.get('isAutomated', False),
                     datetime.now().isoformat()
@@ -228,7 +245,18 @@ class DatabaseManager:
         except Exception as e:
             print(f"Error retrieving user {username}: {e}")
             return None
-    
+    def get_all_users(self) -> List[Dict]:
+        """Retrieve all users from the database"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute('SELECT * FROM users ORDER BY username')
+                rows = cursor.fetchall()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            print(f"Error retrieving all users: {e}")
+            return []
     def get_user_followings(self, username: str) -> List[str]:
         """Get list of usernames that a user is following"""
         try:
@@ -236,6 +264,7 @@ class DatabaseManager:
                 cursor = conn.cursor()
                 cursor.execute('''
                     SELECT following_username FROM followings 
+
                     WHERE follower_username = ?
                     ORDER BY scraped_at DESC
                 ''', (username.lower(),))
@@ -370,6 +399,111 @@ class DatabaseManager:
             print(f"Error resetting processing status for {username}: {e}")
             return False
     
+    def store_ai_analysis(self, username: str, ai_bio: bool, found_keywords: List[str]) -> bool:
+        """Store AI analysis results for a user"""
+        try:
+            keywords_json = json.dumps(found_keywords) if found_keywords else '[]'
+            
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO ai_analysis (
+                        username, ai_bio, found_keywords, keyword_count, updated_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                ''', (
+                    username, 
+                    ai_bio, 
+                    keywords_json, 
+                    len(found_keywords), 
+                    datetime.now().isoformat()
+                ))
+                conn.commit()
+                return True
+        except Exception as e:
+            print(f"Error storing AI analysis for {username}: {e}")
+            return False
+    
+    def get_ai_analysis(self, username: str) -> Optional[Dict]:
+        """Get AI analysis results for a specific user"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute('SELECT * FROM ai_analysis WHERE username = ?', (username,))
+                row = cursor.fetchone()
+                if row:
+                    result = dict(row)
+                    # Parse the JSON keywords back to list
+                    result['found_keywords'] = json.loads(result['found_keywords']) if result['found_keywords'] else []
+                    return result
+                return None
+        except Exception as e:
+            print(f"Error retrieving AI analysis for {username}: {e}")
+            return None
+    
+    def get_ai_users(self) -> List[Dict]:
+        """Get all users marked as AI-related with their details"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT u.username, u.name, u.bio, u.followers, u.following, 
+                           a.found_keywords, a.keyword_count, a.analyzed_at
+                    FROM users u
+                    JOIN ai_analysis a ON u.username = a.username
+                    WHERE a.ai_bio = 1
+                    ORDER BY a.keyword_count DESC, u.followers DESC
+                ''')
+                rows = cursor.fetchall()
+                results = []
+                for row in rows:
+                    result = dict(row)
+                    result['found_keywords'] = json.loads(result['found_keywords']) if result['found_keywords'] else []
+                    results.append(result)
+                return results
+        except Exception as e:
+            print(f"Error retrieving AI users: {e}")
+            return []
+    
+    def get_non_ai_users(self) -> List[Dict]:
+        """Get all users marked as non-AI-related"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT u.username, u.name, u.bio, u.followers, u.following, a.analyzed_at
+                    FROM users u
+                    JOIN ai_analysis a ON u.username = a.username
+                    WHERE a.ai_bio = 0
+                    ORDER BY u.followers DESC
+                ''')
+                rows = cursor.fetchall()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            print(f"Error retrieving non-AI users: {e}")
+            return []
+    
+    def get_unanalyzed_users(self) -> List[Dict]:
+        """Get users who haven't been analyzed for AI keywords yet"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT u.username, u.name, u.bio, u.followers, u.following
+                    FROM users u
+                    LEFT JOIN ai_analysis a ON u.username = a.username
+                    WHERE a.username IS NULL
+                    ORDER BY u.followers DESC
+                ''')
+                rows = cursor.fetchall()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            print(f"Error retrieving unanalyzed users: {e}")
+            return []
+    
     def get_stats(self) -> Dict[str, int]:
         """Get database statistics"""
         try:
@@ -400,3 +534,50 @@ class DatabaseManager:
         except Exception as e:
             print(f"Error getting stats: {e}")
             return {'total_users': 0, 'total_relationships': 0, 'processed_users': 0, 'unprocessed_users': 0, 'failed_users': 0}
+
+    def get_ai_stats(self) -> Dict[str, any]:
+        """Get detailed AI analysis statistics"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Basic counts
+                cursor.execute('SELECT COUNT(*) FROM ai_analysis WHERE ai_bio = 1')
+                ai_count = cursor.fetchone()[0]
+                
+                cursor.execute('SELECT COUNT(*) FROM ai_analysis WHERE ai_bio = 0')
+                non_ai_count = cursor.fetchone()[0]
+                
+                total_analyzed = ai_count + non_ai_count
+                
+                # Most common keywords
+                cursor.execute('''
+                    SELECT found_keywords FROM ai_analysis 
+                    WHERE ai_bio = 1 AND found_keywords != '[]'
+                ''')
+                all_keywords = []
+                for row in cursor.fetchall():
+                    keywords = json.loads(row[0])
+                    all_keywords.extend(keywords)
+                
+                # Count keyword frequency
+                keyword_counts = {}
+                for keyword in all_keywords:
+                    keyword_counts[keyword] = keyword_counts.get(keyword, 0) + 1
+                
+                # Top keywords
+                top_keywords = sorted(keyword_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+                
+                return {
+                    'total_analyzed': total_analyzed,
+                    'ai_users': ai_count,
+                    'non_ai_users': non_ai_count,
+                    'ai_percentage': round((ai_count / total_analyzed * 100) if total_analyzed > 0 else 0, 2),
+                    'total_keywords_found': len(all_keywords),
+                    'unique_keywords': len(keyword_counts),
+                    'top_keywords': top_keywords
+                }
+                
+        except Exception as e:
+            print(f"Error getting AI stats: {e}")
+            return {}
