@@ -2,3 +2,4 @@ venv
 *.sql
 *.db
 *.txt
+**/twitterdata
